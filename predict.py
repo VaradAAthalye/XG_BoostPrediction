@@ -1,184 +1,128 @@
 import joblib
 import numpy as np
-import pandas as pd
-import math
 
-# -----------------------------
-# Physics helper functions
-# -----------------------------
-def wheel_force_components(v, m, Cr, rho, Cd, A, a_req=0.0, theta=0.0):
-    g = 9.81
-    F_roll = m * g * Cr
-    F_aero = 0.5 * rho * Cd * A * v**2
-    F_grade = m * g * math.sin(theta)
-    F_accel = m * a_req
-    return F_roll, F_aero, F_grade, F_accel, (F_roll + F_aero + F_grade + F_accel)
+# --------------------------
+# HELPER: Compute extra powertrain features
+# --------------------------
+def compute_pt_features(motor_peak, motor_cont, gear_ratio, tire_r, Cd, A, Cr, rho, vehicle_mass):
+    # battery factors (unknown → assume fresh battery)
+    battery_deg = 0.0
+    cont_ratio = motor_cont / motor_peak
+    battery_multiplier = 1.0
 
-def motor_rpm_from_speed(v, gear, tire_r):
-    omega_motor = (v / tire_r) * gear
-    rpm = omega_motor * 60.0 / (2 * math.pi)
-    return rpm
-
-def power_required_aero_roll(v, m, Cr, rho, Cd, A):
-    g = 9.81
-    F_roll = m * g * Cr
-    F_aero = 0.5 * rho * Cd * A * v**2
-    return (F_roll + F_aero) * v
-
-def battery_efficiency_from_degradation(deg):
-    return float(np.clip(1.0 - 0.4 * deg, 0.5, 1.0))
-
-DEFAULT_DRIVETRAIN_EFF = 0.90
-DEFAULT_MOTOR_MAX_RPM = 15000
-VEHICLE_SPEEDS = np.linspace(0.1, 50.0, 500)
-
-# -----------------------------
-# Motor efficiency model
-# -----------------------------
-def motor_efficiency_model(torque, omega, motor_peak, motor_max_rpm=DEFAULT_MOTOR_MAX_RPM):
-    rpm = omega * 60.0 / (2 * np.pi)
-    nt = np.clip(np.abs(torque) / max(1e-6, motor_peak), 0.0, 1.0)
-    ns = np.clip(rpm / motor_max_rpm, 0.0, 1.0)
-    eta = 0.6 + 0.35 * np.exp(-((nt - 0.45)**2) / 0.08) * np.exp(-((ns - 0.35)**2) / 0.18)
-    if nt > 0.9: eta *= 0.85
-    if ns > 0.95: eta *= 0.90
-    return float(np.clip(eta, 0.05, 0.98))
-
-# -----------------------------
-# Full physics simulator
-# -----------------------------
-def compute_max_efficiency_for_sample(m_peak, m_cont, gear, batt_deg,
-                                      tire_r, mass, Cd, A, Cr, rho):
-
-    effs, speeds, torques, rpms, feasible_flags = [], [], [], [], []
-
-    for v in VEHICLE_SPEEDS:
-        F_roll, F_aero, F_grade, F_accel, F_req = wheel_force_components(
-            v, mass, Cr, rho, Cd, A
-        )
-
-        T_wheel = F_req * tire_r
-        T_motor = T_wheel / (gear * DEFAULT_DRIVETRAIN_EFF)
-
-        feasible = (T_motor <= m_peak) and (T_motor <= m_cont)
-        omega_motor = (v / tire_r) * gear
-        rpm_motor = omega_motor * 60 / (2 * math.pi)
-
-        eff_motor = motor_efficiency_model(T_motor, omega_motor, m_peak)
-        eff_batt = battery_efficiency_from_degradation(batt_deg)
-        eff_total = float(np.clip(eff_motor * DEFAULT_DRIVETRAIN_EFF * eff_batt, 0, 1))
-
-        effs.append(eff_total)
-        speeds.append(v)
-        torques.append(T_motor)
-        rpms.append(rpm_motor)
-        feasible_flags.append(feasible)
-
-    feasible_idx = [i for i, f in enumerate(feasible_flags) if f]
-
-    if len(feasible_idx) == 0:
-        return 0, None, None, None, False
-
-    best_local = int(np.argmax([effs[i] for i in feasible_idx]))
-    i = feasible_idx[best_local]
-
-    return (
-        float(effs[i]),
-        float(speeds[i] * 3.6),
-        float(torques[i]),
-        float(rpms[i]),
-        True
-    )
-
-# -----------------------------
-# Load the trained model
-# -----------------------------
-model = joblib.load("powertrain_physics_model.joblib")
-
-# -----------------------------
-# Build ML feature vector
-# -----------------------------
-feature_cols = [
-    'motor_peak','motor_cont','gear_ratio','battery_deg','tire_radius',
-    'vehicle_mass','Cd','A','Cr','rho','cont_ratio','battery_multiplier',
-    'T_wheel_0ms','T_motor_0ms','rpm_0ms','Preq_0ms',
-    'T_wheel_5ms','T_motor_5ms','rpm_5ms','Preq_5ms',
-    'T_wheel_20ms','T_motor_20ms','rpm_20ms','Preq_20ms'
-]
-
-def build_feat(m_peak, m_cont, gear, batt_deg, tire_r, mass, Cd, A, Cr, rho):
-    cont_ratio = m_cont / max(1e-6, m_peak)
-    batt_mult = battery_efficiency_from_degradation(batt_deg)
-
-    speeds = [0.1, 5.0, 20.0]
-    phys = {}
+    speeds = [0, 5, 20]  # m/s
+    T_w_list = []
+    T_m_list = []
+    rpm_list = []
+    P_req_list = []
 
     for v in speeds:
-        F_roll, F_aero, F_grade, F_accel, F_req = wheel_force_components(v, mass, Cr, rho, Cd, A)
-        T_wheel = F_req * tire_r
-        T_motor = T_wheel / (gear * DEFAULT_DRIVETRAIN_EFF)
-        rpm_m = motor_rpm_from_speed(v, gear, tire_r)
-        P_req = power_required_aero_roll(v, mass, Cr, rho, Cd, A)
+        F_roll = vehicle_mass * 9.81 * Cr
+        F_aero = 0.5 * rho * Cd * A * (v ** 2)
+        F_accel = vehicle_mass * 4.0 if v < 5 else 0.0
+        F_total = F_roll + F_aero + F_accel
 
-        key = f"{int(v)}ms"
-        phys[f"T_wheel_{key}"] = T_wheel
-        phys[f"T_motor_{key}"] = T_motor
-        phys[f"rpm_{key}"] = rpm_m
-        phys[f"Preq_{key}"] = P_req
+        T_wheel = F_total * tire_r
+        T_motor = T_wheel / max(1e-6, gear_ratio * 0.90)  # drivetrain eff = 0.9
+        omega_wheel = v / tire_r
+        omega_motor = omega_wheel * gear_ratio
+        rpm = omega_motor * 60 / (2 * np.pi)
 
-    return {
-        'motor_peak': m_peak,
-        'motor_cont': m_cont,
-        'gear_ratio': gear,
-        'battery_deg': batt_deg,
-        'tire_radius': tire_r,
-        'vehicle_mass': mass,
-        'Cd': Cd,
-        'A': A,
-        'Cr': Cr,
-        'rho': rho,
-        'cont_ratio': cont_ratio,
-        'battery_multiplier': batt_mult,
-        **phys
-    }
+        P_req = T_motor * omega_motor
 
-# -----------------------------
-# User input
-# -----------------------------
-print("\n=== POWERTRAIN EFFICIENCY PREDICTOR ===\n")
+        T_w_list.append(T_wheel)
+        T_m_list.append(T_motor)
+        rpm_list.append(rpm)
+        P_req_list.append(P_req)
 
-m_peak = float(input("Motor peak torque (Nm): "))
-m_cont = float(input("Motor continuous torque (Nm): "))
-gear = float(input("Gear ratio: "))
-SOC = float(input("Battery SOC %: "))
-batt_deg = (100 - SOC) / 100.0
-tire_in = float(input("Tire radius (inches): "))
-tire_r = tire_in * 0.0254
-mass = float(input("Vehicle mass (kg): "))
-Cd = float(input("Drag coeff Cd: "))
-A = float(input("Frontal area A (m^2): "))
+    # Return VECTOR for ML
+    pt_vec = np.array([[
+        motor_peak, motor_cont, gear_ratio,
+        battery_deg,
+        tire_r, vehicle_mass, Cd, A, Cr, rho,
+        cont_ratio, battery_multiplier,
+        T_w_list[0], T_m_list[0], rpm_list[0], P_req_list[0],
+        T_w_list[1], T_m_list[1], rpm_list[1], P_req_list[1],
+        T_w_list[2], T_m_list[2], rpm_list[2], P_req_list[2]
+    ]])
+
+    return pt_vec
+
+
+# --------------------------
+# MAIN PREDICTION SCRIPT
+# --------------------------
+print("\n=== Enter POWERTRAIN Inputs ===")
+motor_peak = float(input("Motor peak torque (Nm): "))
+motor_cont = float(input("Motor continuous torque (Nm): "))
+motor_max_rpm = float(input("Motor max RPM: "))
+gear_ratio = float(input("Gear ratio: "))
+tire_inch = float(input("Tire radius (inches): "))
+vehicle_mass = float(input("Vehicle mass (kg): "))
+Cd = float(input("Drag coefficient Cd: "))
+A = float(input("Frontal area (m^2): "))
 Cr = float(input("Rolling resistance Cr: "))
-rho = 1.225
 
-feat = build_feat(m_peak, m_cont, gear, batt_deg, tire_r, mass, Cd, A, Cr, rho)
-X = pd.DataFrame([feat])[feature_cols]
+print("\n=== Enter BATTERY CELL Inputs ===")
+V_cell = float(input("Cell nominal voltage (V): "))
+Ah_cell = float(input("Cell capacity (Ah): "))
+m_cell = float(input("Cell mass (kg): "))
+R_cell = float(input("Internal resistance (ohm): "))
+I_cell_max = float(input("Max discharge current (A): "))
 
-eff_pred = float(model.predict(X)[0])
+print("\n=== Enter DESIGN Inputs ===")
+V_pack_target = float(input("Target pack voltage: "))
+P_peak_required = float(input("Required peak power (<=80000): "))
 
-# Run physics ground truth
-phys_eff, phys_spd, phys_tq, phys_rpm, feas = compute_max_efficiency_for_sample(
-    m_peak, m_cont, gear, batt_deg, tire_r, mass, Cd, A, Cr, rho
+# Convert tire size
+tire_r = tire_inch * 0.0254
+
+# --------------------------
+# LOAD MODELS
+# --------------------------
+battery_model = joblib.load("models/battery_pack_model.joblib")
+powertrain_model = joblib.load("models/powertrain_physics_model.joblib")
+
+# --------------------------
+# BATTERY PACK PREDICTION
+# --------------------------
+X_batt = np.array([[
+    V_cell, Ah_cell, m_cell, R_cell,
+    I_cell_max, V_pack_target, P_peak_required
+]])
+
+S_mod  = int(round(battery_model["S_mod"].predict(X_batt)[0]))
+P_mod  = int(round(battery_model["P_mod"].predict(X_batt)[0]))
+Ns     = int(round(battery_model["Ns"].predict(X_batt)[0]))
+Np     = int(round(battery_model["Np"].predict(X_batt)[0]))
+V_pack_raw = float(battery_model["V_pack"].predict(X_batt)[0])
+
+# Force pack voltage close to target
+V_pack = max(0.8*V_pack_target, min(V_pack_raw, 1.2*V_pack_target))
+
+mass_pack = float(battery_model["mass_pack"].predict(X_batt)[0])
+bat_eff = float(battery_model["battery_eff"].predict(X_batt)[0])
+
+print("\n===== BATTERY PACK PREDICTION =====")
+print(f"S_mod = {S_mod}")
+print(f"P_mod = {P_mod}")
+print(f"Ns    = {Ns}")
+print(f"Np    = {Np}")
+print(f"V_pack = {V_pack:.2f} V")
+print(f"Mass  = {mass_pack:.2f} kg")
+print(f"Battery_eff = {bat_eff:.4f}")
+
+# --------------------------
+# POWERTRAIN EFFICIENCY PREDICTION
+# --------------------------
+print("\n==== Predicting Powertrain Efficiency ====")
+
+pt_features = compute_pt_features(
+    motor_peak, motor_cont, gear_ratio,
+    tire_r, Cd, A, Cr, 1.225, vehicle_mass
 )
 
-print("\n--- RESULTS ---")
-print(f"ML Predicted Max Efficiency    : {eff_pred*100:.2f}%")
+pred_eff_pt = float(powertrain_model.predict(pt_features)[0])
 
-if feas:
-    print(f"Physics Max Efficiency         : {phys_eff*100:.2f}%")
-    print(f"Speed at Max Efficiency        : {phys_spd:.2f} km/h")
-    print(f"Motor Torque @ Max Eff         : {phys_tq:.2f} Nm")
-    print(f"Motor RPM @ Max Eff            : {phys_rpm:.2f} rpm")
-else:
-    print("Physics calculation: NOT FEASIBLE configuration")
-
-print("--------------------------\n")
+print("\n=== FINAL RESULT ===")
+print(f"Predicted Max Efficiency: {pred_eff_pt * 100:.2f}%")
