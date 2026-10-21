@@ -422,6 +422,35 @@ export default function PredictionStudio({
             </button>
           </div>
 
+          {/* Quick Output Confirmation Card Right Under Button */}
+          {prediction && !error && (
+            <div className="p-4 rounded-xl bg-neon-500/10 border border-neon-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-neon/10">
+              <div className="flex items-center space-x-3">
+                <div className="h-9 w-9 rounded-full bg-neon-500/20 border border-neon-500/40 flex items-center justify-center text-neon-400 flex-shrink-0">
+                  <Check className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="text-white font-bold text-sm">
+                    Inference Complete: <span className="text-neon-400 font-extrabold text-base">{prediction.predicted_efficiency_percent}% Efficiency</span>
+                  </div>
+                  <div className="text-[11px] text-slate-300 font-mono mt-0.5">
+                    Architecture: <span className="text-neon-400 font-semibold">{pack?.S_mod}S{pack?.P_mod}P</span> &bull; {pack?.V_pack} V &bull; {pack?.Mass_pack} kg &bull; {pack?.Energy_Wh ? (pack.Energy_Wh / 1000).toFixed(1) + ' kWh' : ''}
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  const target = document.getElementById('results-column');
+                  if (target) target.scrollIntoView({ behavior: 'smooth' });
+                }}
+                className="px-3 py-1.5 rounded-lg bg-charcoal-800 hover:bg-charcoal-700 border border-charcoal-700 text-xs font-mono text-neon-400 hover:text-neon-300 transition-colors self-start sm:self-auto"
+              >
+                Inspect Telemetry &darr;
+              </button>
+            </div>
+          )}
+
           {error && (
             <div className="p-4 rounded-xl bg-racing-red/10 border border-racing-red/40 text-racing-red text-xs font-mono space-y-1">
               <div className="flex items-center space-x-2 font-bold text-sm">
@@ -433,8 +462,8 @@ export default function PredictionStudio({
           )}
         </div>
 
-        {/* Prediction Results Column (5 cols) */}
-        <div className="lg:col-span-5 space-y-5">
+        {/* Prediction Results Column (5 cols) - Sticky so it is always in view */}
+        <div id="results-column" className="lg:col-span-5 space-y-5 lg:sticky lg:top-6 lg:self-start">
           {/* Main Prediction Score Card */}
           <div className="racing-card p-6 flex flex-col items-center justify-center relative overflow-hidden bg-racing-gradient">
             <div className="absolute top-2 right-3 text-[10px] font-mono text-slate-500">

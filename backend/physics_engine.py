@@ -119,74 +119,85 @@ def design_pack_physics(
 
     Returns a dict with pack parameters or None if no feasible config found.
     """
-    MAX_MOD_VOLT = 120
-    MAX_MOD_MASS = 12
-    MAX_MOD_ENERGY_J = 6e6
-    MAX_PACK_MASS = 60
-    MAX_CELLS_TOTAL = 2000
-    MAX_NS = 30
-    MAX_NP = 6
+    search_tiers = [
+        {"max_mod_v": 120, "max_mod_m": 12.0, "max_pack_m": 60.0, "max_cells": 2000, "max_p": 20, "max_ns": 30, "max_np": 6},
+        {"max_mod_v": 120, "max_mod_m": 30.0, "max_pack_m": 150.0, "max_cells": 5000, "max_p": 30, "max_ns": 35, "max_np": 8},
+    ]
 
-    best_pack = None
+    for tier in search_tiers:
+        best_pack = None
+        MAX_MOD_VOLT = tier["max_mod_v"]
+        MAX_MOD_MASS = tier["max_mod_m"]
+        MAX_MOD_ENERGY_J = 6e6
+        MAX_PACK_MASS = tier["max_pack_m"]
+        MAX_CELLS_TOTAL = tier["max_cells"]
+        MAX_P = tier["max_p"]
+        MAX_NS = tier["max_ns"]
+        MAX_NP = tier["max_np"]
 
-    for S in range(2, 30):  # series per module
-        V_mod = S * V_cell
-        if V_mod > MAX_MOD_VOLT:
-            continue
-
-        for P in range(1, 20):  # parallel per module
-            cells_mod = S * P
-            m_mod = cells_mod * m_cell
-            if m_mod > MAX_MOD_MASS:
+        for S in range(2, 35):
+            V_mod = S * V_cell
+            if V_mod > MAX_MOD_VOLT:
                 continue
 
-            E_mod_Wh = S * V_cell * (P * Ah_cell)
-            E_mod_J = E_mod_Wh * 3600
-            if E_mod_J > MAX_MOD_ENERGY_J:
-                continue
-
-            for Ns in range(2, MAX_NS):
-                V_pack = Ns * V_mod
-                if not (0.9 * V_pack_target <= V_pack <= 1.1 * V_pack_target):
+            for P in range(1, MAX_P):
+                cells_mod = S * P
+                m_mod = cells_mod * m_cell
+                if m_mod > MAX_MOD_MASS:
                     continue
 
-                I_pack_req = P_peak_required / V_pack
-                I_cell_at_peak = I_pack_req / P
-                if I_cell_at_peak > I_cell_max:
+                E_mod_Wh = S * V_cell * (P * Ah_cell)
+                E_mod_J = E_mod_Wh * 3600
+                if E_mod_J > MAX_MOD_ENERGY_J:
                     continue
 
-                for Np in range(1, MAX_NP + 1):
-                    total_cells = Ns * Np * cells_mod
-
-                    if total_cells > MAX_CELLS_TOTAL:
+                for Ns in range(2, MAX_NS):
+                    V_pack = Ns * V_mod
+                    v_tol = 0.10 if tier["max_pack_m"] <= 60 else 0.15
+                    if not ((1.0 - v_tol) * V_pack_target <= V_pack <= (1.0 + v_tol) * V_pack_target):
                         continue
 
-                    mass_pack = total_cells * m_cell
-                    if mass_pack > MAX_PACK_MASS:
-                        continue
+                    I_pack_req = P_peak_required / V_pack
 
-                    R_pack = (R_cell * S * Ns) / (P * Np)
-                    V_load = V_pack - I_pack_req * R_pack
-                    eff = max(0.5, min(1.0, V_load / V_pack))
+                    for Np in range(1, MAX_NP + 1):
+                        total_parallel = P * Np
+                        I_cell_at_peak = I_pack_req / total_parallel
+                        if I_cell_at_peak > I_cell_max:
+                            continue
 
-                    pack = {
-                        "S_mod": S,
-                        "P_mod": P,
-                        "Ns_modules": Ns,
-                        "Np": Np,
-                        "V_pack": round(V_pack, 2),
-                        "V_load": round(V_load, 2),
-                        "Battery_eff": round(eff, 4),
-                        "Mass_pack": round(mass_pack, 2),
-                        "Cells_total": total_cells,
-                        "Energy_Wh": round(total_cells * Ah_cell * V_cell, 2),
-                    }
+                        total_cells = Ns * Np * cells_mod
+                        if total_cells > MAX_CELLS_TOTAL:
+                            continue
 
-                    if (best_pack is None) or (eff > best_pack["Battery_eff"]) or \
-                       (eff == best_pack["Battery_eff"] and mass_pack < best_pack["Mass_pack"]):
-                        best_pack = pack
+                        mass_pack = total_cells * m_cell
+                        if mass_pack > MAX_PACK_MASS:
+                            continue
 
-    return best_pack
+                        R_pack = (R_cell * S * Ns) / (P * Np)
+                        V_load = V_pack - I_pack_req * R_pack
+                        eff = max(0.5, min(1.0, V_load / V_pack))
+
+                        pack = {
+                            "S_mod": S,
+                            "P_mod": P,
+                            "Ns_modules": Ns,
+                            "Np": Np,
+                            "V_pack": round(V_pack, 2),
+                            "V_load": round(V_load, 2),
+                            "Battery_eff": round(eff, 4),
+                            "Mass_pack": round(mass_pack, 2),
+                            "Cells_total": total_cells,
+                            "Energy_Wh": round(total_cells * Ah_cell * V_cell, 2),
+                        }
+
+                        if (best_pack is None) or (eff > best_pack["Battery_eff"]) or \
+                           (eff == best_pack["Battery_eff"] and mass_pack < best_pack["Mass_pack"]):
+                            best_pack = pack
+
+        if best_pack is not None:
+            return best_pack
+
+    return None
 
 
 # ---------------------
