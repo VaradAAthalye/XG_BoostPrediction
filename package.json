@@ -1,0 +1,11 @@
+{
+  "name": "ev-powertrain-intelligence-platform",
+  "version": "2.0.0",
+  "description": "EV Powertrain Intelligence Platform — Formula Student & Motorsport Telemetry",
+  "scripts": {
+    "dev": "npm --prefix frontend run dev",
+    "build": "npm --prefix frontend run build",
+    "frontend": "npm --prefix frontend run dev",
+    "backend": "uvicorn backend.server:app --reload --port 8000"
+  }
+}

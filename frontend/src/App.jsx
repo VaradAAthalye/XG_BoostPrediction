@@ -57,10 +57,30 @@ export default function App() {
     setLoading(true);
     setError(null);
     try {
-      const payload = { ...customInputs, model_choice: selectedModel };
+      const numericKeys = [
+        'motor_peak', 'motor_cont', 'motor_max_rpm', 'gear_ratio',
+        'tire_r_in', 'vehicle_mass', 'Cd', 'A', 'Cr',
+        'V_cell', 'Ah_cell', 'm_cell', 'R_cell', 'I_cell_max',
+        'V_pack_target', 'P_peak_required'
+      ];
+      const sanitized = { ...customInputs };
+      for (const k of numericKeys) {
+        const val = parseFloat(sanitized[k]);
+        if (isNaN(val) || val <= 0) {
+          throw new Error(`Parameter '${k}' must be a valid positive number.`);
+        }
+        sanitized[k] = val;
+      }
+      if (sanitized.motor_cont > sanitized.motor_peak) {
+        throw new Error(
+          `Motor continuous torque (${sanitized.motor_cont} Nm) cannot exceed peak torque (${sanitized.motor_peak} Nm).`
+        );
+      }
+      const payload = { ...sanitized, model_choice: selectedModel };
       const res = await runPrediction(payload);
       if (res.feasible) {
         setPrediction(res);
+        setError(null);
       } else {
         setError(res.error || "No feasible battery configuration found within constraints.");
       }

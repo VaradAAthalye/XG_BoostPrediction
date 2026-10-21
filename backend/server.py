@@ -20,6 +20,8 @@ import joblib
 import numpy as np
 import pandas as pd
 from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, field_validator
 
@@ -133,7 +135,7 @@ class PredictRequest(BaseModel):
     def cont_le_peak(cls, v, info):
         peak = info.data.get("motor_peak")
         if peak is not None and v > peak:
-            raise ValueError("motor_cont must be ≤ motor_peak")
+            raise ValueError("motor_cont must be <= motor_peak")
         return v
 
 
@@ -209,6 +211,20 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request, exc: RequestValidationError):
+    error_messages = []
+    for err in exc.errors():
+        field = " -> ".join(str(loc) for loc in err.get("loc", []) if loc != "body")
+        msg = err.get("msg", "Invalid parameter")
+        error_messages.append(f"{field}: {msg}" if field else msg)
+    clean_message = " | ".join(error_messages)
+    return JSONResponse(
+        status_code=422,
+        content={"detail": clean_message},
+    )
 
 
 # ───────────────────────────────────────────────────

@@ -428,7 +428,7 @@ export default function PredictionStudio({
                 <AlertCircle className="w-4 h-4" />
                 <span>Simulation Constraint Violation</span>
               </div>
-              <p>{error}</p>
+              <p>{typeof error === 'object' ? JSON.stringify(error) : String(error)}</p>
             </div>
           )}
         </div>
